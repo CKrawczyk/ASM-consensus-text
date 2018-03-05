@@ -19,7 +19,7 @@ def non_blank_counter(x):
     return c
 
 
-def most_common_text(input_file, output_folder, show_score=False):
+def most_common_text(input_file, output_folder, show_score=False, replace_arrow=False):
     reducer_table = pandas.read_csv(input_file)
     frames = sorted([c for c in reducer_table.columns if 'data.frame' in c])
     edx = reducer_table.reducer_key == 'ext'
@@ -30,7 +30,10 @@ def most_common_text(input_file, output_folder, show_score=False):
         pages = []
         for frame in frames:
             if not pandas.isnull(reduction[frame]):
-                data = eval(reduction[frame].replace('=>', ':'))
+                if replace_arrow:
+                    data = eval(reduction[frame].replace('=>', ':'))
+                else:
+                    data = eval(reduction[frame])
                 lines = []
                 for l in data:
                     text_counter = [non_blank_counter(t) for t in l['clusters_text']]
@@ -63,5 +66,6 @@ if __name__ == '__main__':
     parser.add_argument('input_file', type=argparse.FileType('r'), help='The reduction export from caesar for the workflow')
     parser.add_argument('output_folder', type=is_dir, help='The folder to save the `.txt` files to')
     parser.add_argument('-s', '--show-score', action='store_true', help='Show consensus scores for each line of text')
+    parser.add_argument('-r', '--replace-arrow', action='store_true', help='Replace `=>` with `:` in csv dump before processing (only needed for old Caesar data dumps)')
     args = parser.parse_args()
-    most_common_text(args.input_file, args.output_folder, show_score=args.show_score)
+    most_common_text(args.input_file, args.output_folder, show_score=args.show_score, replace_arrow=args.replace_arrow)
