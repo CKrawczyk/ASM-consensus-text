@@ -19,14 +19,18 @@ def non_blank_counter(x):
     return c
 
 
-def most_common_text(input_file, output_folder, show_score=False, replace_arrow=False):
+def most_common_text(input_file, output_folder, show_score=False, replace_arrow=False, reducer_key=None):
     reducer_table = pandas.read_csv(input_file)
     frames = sorted([c for c in reducer_table.columns if 'data.frame' in c])
-    edx = reducer_table.reducer_key == 'ext'
+    if reducer_key is not None:
+        edx = reducer_table.reducer_key == 'ext'
+        table_to_loop = reducer_table[edx]
+    else:
+        table_to_loop = reducer_table
     counter = 0
-    pbar = progressbar.ProgressBar(widgets=widgets, max_value=edx.sum())
+    pbar = progressbar.ProgressBar(widgets=widgets, max_value=len(table_to_loop))
     pbar.start()
-    for idx, reduction in reducer_table[edx].iterrows():
+    for idx, reduction in table_to_loop.iterrows():
         pages = []
         for frame in frames:
             if not pandas.isnull(reduction[frame]):
@@ -67,5 +71,6 @@ if __name__ == '__main__':
     parser.add_argument('output_folder', type=is_dir, help='The folder to save the `.txt` files to')
     parser.add_argument('-s', '--show-score', action='store_true', help='Show consensus scores for each line of text')
     parser.add_argument('-r', '--replace-arrow', action='store_true', help='Replace `=>` with `:` in csv dump before processing (only needed for old Caesar data dumps)')
+    parser.add_argument('-k', '--reducer-key', default=None, help='The reducer key to use, if left blank no key is used (useful for data processed offline)')
     args = parser.parse_args()
-    most_common_text(args.input_file, args.output_folder, show_score=args.show_score, replace_arrow=args.replace_arrow)
+    most_common_text(args.input_file, args.output_folder, show_score=args.show_score, replace_arrow=args.replace_arrow, reducer_key=args.reducer_key)
