@@ -19,11 +19,11 @@ def non_blank_counter(x):
     return c
 
 
-def most_common_text(input_file, output_folder, show_score=False, replace_arrow=False, reducer_key=None):
+def most_common_text(input_file, output_folder, show_score=False, replace_arrow=False, reducer_key=None, strip_sw=False):
     reducer_table = pandas.read_csv(input_file)
     frames = sorted([c for c in reducer_table.columns if 'data.frame' in c])
     if reducer_key is not None:
-        edx = reducer_table.reducer_key == 'ext'
+        edx = reducer_table.reducer_key == reducer_key
         table_to_loop = reducer_table[edx]
     else:
         table_to_loop = reducer_table
@@ -49,6 +49,9 @@ def most_common_text(input_file, output_folder, show_score=False, replace_arrow=
                     lines.append(' '.join(most_common) + consensus)
                 pages.append('\n'.join(lines))
         transcription = '\n\n'.join(pages)
+        if strip_sw:
+            transcription = transcription.replace('<sw-', '<')
+            transcription = transcription.replace('</sw-', '</')
         with open('{0}/{1}.txt'.format(output_folder, reduction.subject_id), 'w') as file_out:
             file_out.write(transcription)
         counter += 1
@@ -72,5 +75,6 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--show-score', action='store_true', help='Show consensus scores for each line of text')
     parser.add_argument('-r', '--replace-arrow', action='store_true', help='Replace `=>` with `:` in csv dump before processing (only needed for old Caesar data dumps)')
     parser.add_argument('-k', '--reducer-key', default=None, help='The reducer key to use, if left blank no key is used (useful for data processed offline)')
+    parser.add_argument('--strip-sw', action='store_true', help='Strip "sw-" for tag names')
     args = parser.parse_args()
-    most_common_text(args.input_file, args.output_folder, show_score=args.show_score, replace_arrow=args.replace_arrow, reducer_key=args.reducer_key)
+    most_common_text(args.input_file, args.output_folder, show_score=args.show_score, replace_arrow=args.replace_arrow, reducer_key=args.reducer_key, strip_sw=args.strip_sw)
