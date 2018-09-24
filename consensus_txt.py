@@ -85,7 +85,8 @@ def most_common_text(input_file, output_folder, show_score=False, replace_arrow=
         counter += 1
         pbar.update(counter)
     pbar.finish()
-    pandas.DataFrame(csv_output).to_csv('{0}/{1}.csv'.format(output_folder, csv), index=False)
+    if csv is not None:
+        pandas.DataFrame(csv_output).to_csv('{0}/{1}.csv'.format(output_folder, csv), index=False)
 
 
 def is_dir(dirname):
