@@ -2,7 +2,11 @@ import argparse
 import os
 import pandas
 import progressbar
-from collections import Counter, OrderedDict
+import json
+from collections import OrderedDict
+from panoptes_aggregation.csv_utils import unflatten_data
+from panoptes_aggregation.routes import MyEncoder
+from pandas.io.json import json_normalize
 
 widgets = [
     'Processing: ',
@@ -12,81 +16,93 @@ widgets = [
 ]
 
 
-def non_blank_counter(x):
-    c = Counter(x)
-    if '' in c:
-        del(c[''])
-    return c
-
-
-def most_common_text(input_file, output_folder, show_score=False, replace_arrow=False, reducer_key=None, strip_sw=False, csv=None, metadata=None):
+def most_common_text(
+    input_file,
+    output_folder,
+    reducer_key=None,
+    strip_sw=False,
+    csv=None,
+    metadata=None
+):
     reducer_table = pandas.read_csv(input_file)
-    frames = sorted([c for c in reducer_table.columns if 'data.frame' in c])
     if reducer_key is not None:
         edx = reducer_table.reducer_key == reducer_key
         table_to_loop = reducer_table[edx]
     else:
         table_to_loop = reducer_table
-    if csv is not None:
-        csv_output = OrderedDict([
-            ('zooniverse_subject_id', []),
-            ('text', []),
-            ('consensus_score', []),
-            ('number_views', [])
-        ])
-        if metadata is not None:
-            subjects = pandas.read_csv(metadata)
-            subjects.metadata = subjects.metadata.apply(eval)
-            for key in subjects.iloc[0].metadata.keys():
-                csv_output[key] = []
+    subject_csv = []
+    if metadata is not None:
+        subjects = pandas.read_csv(metadata)
+        subjects.metadata = subjects.metadata.apply(eval)
     counter = 0
     pbar = progressbar.ProgressBar(widgets=widgets, max_value=len(table_to_loop))
     pbar.start()
     for idx, reduction in table_to_loop.iterrows():
-        if csv is not None:
-            consensus_score = []
-            number_views = []
+        page_csv = []
         pages = []
+        data = unflatten_data(reduction)
+        frames = sorted([k for k in data.keys() if 'frame' in k])
+        subject_row = OrderedDict([
+            ('zooniverse_subject_id', reduction.subject_id),
+            ('number_of_pages', len(frames)),
+            ('transcribed_lines', data['transcribed_lines']),
+            ('low_consensus_lines', data['low_consensus_lines']),
+            ('reducer', data['reducer']),
+            ('reducer_paramters', data['parameters'])
+        ])
+        if metadata is not None:
+            idx = (subjects.subject_id == reduction.subject_id) & (subjects.workflow_id == reduction.workflow_id)
+            subject_row['metadata'] = subjects[idx].iloc[0].metadata
+        subject_csv.append(subject_row)
+        line_counter = 0
         for frame in frames:
-            if not pandas.isnull(reduction[frame]):
-                if replace_arrow:
-                    data = eval(reduction[frame].replace('=>', ':'))
-                else:
-                    data = eval(reduction[frame])
-                lines = []
-                for l in data:
-                    text_counter = [non_blank_counter(t) for t in l['clusters_text']]
-                    most_common = [tc.most_common()[0][0] for tc in text_counter if len(tc) > 0]
-                    if csv is not None:
-                        consensus_score.append(l['consensus_score'])
-                        number_views.append(l['number_views'])
-                        consensus = ''
-                    elif show_score:
-                        consensus = ' [{0:.3}/{1}]'.format(l['consensus_score'], l['number_views'])
-                    else:
-                        consensus = ''
-                    lines.append(' '.join(most_common) + consensus)
-                pages.append('\n'.join(lines))
+            page_number = int(frame[-1]) + 1
+            lines = []
+            for line in data[frame]:
+                line_counter += 1
+                text = line['consensus_text']
+                if strip_sw:
+                    text = text.replace('<sw-', '<')
+                    text = text.replace('</sw-', '</')
+                lines.append(text)
+                page_row = OrderedDict([
+                    ('line_number', line_counter),
+                    ('page_number', page_number),
+                    ('column_number', line['gutter_label'] + 1),
+                    ('text', text),
+                    ('slope', line['line_slope']),
+                    ('consensus_score', line['consensus_score']),
+                    ('number_transcribers', line['number_views']),
+                    ('low_consensus', line['low_consensus']),
+                    ('start', {
+                        'x': line['clusters_x'][0],
+                        'y': line['clusters_y'][0],
+                    }),
+                    ('end', {
+                        'x': line['clusters_x'][1],
+                        'y': line['clusters_y'][1],
+                    }),
+                    ('user_ids', line['user_ids'])
+                ])
+                page_csv.append(page_row)
+            pages.append('\n'.join(lines))
+        subject_dir = os.path.join(output_folder, str(reduction.subject_id))
+        if not os.path.isdir(subject_dir):
+            os.mkdir(subject_dir)
         transcription = '\n\n'.join(pages)
-        if strip_sw:
-            transcription = transcription.replace('<sw-', '<')
-            transcription = transcription.replace('</sw-', '</')
-        if csv is not None:
-            csv_output['zooniverse_subject_id'].append(reduction.subject_id)
-            csv_output['text'].append(transcription)
-            csv_output['consensus_score'].append(consensus_score)
-            csv_output['number_views'].append(number_views)
-            if metadata is not None:
-                idx = (subjects.subject_id == reduction.subject_id) & (subjects.workflow_id == reduction.workflow_id)
-                for key, value in subjects[idx].iloc[0].metadata.items():
-                    csv_output[key].append(value)
-        with open('{0}/{1}.txt'.format(output_folder, reduction.subject_id), 'w') as file_out:
-            file_out.write(transcription)
+        with open(os.path.join(subject_dir, 'transcription.txt'), 'w') as transcription_out:
+            transcription_out.write(transcription)
+        page_dataframe = json_normalize(page_csv)
+        page_csv_out = os.path.join(subject_dir, 'line_metadata.csv')
+        page_dataframe.to_csv(page_csv_out, index=False)
+        with open(os.path.join(subject_dir, 'aggergation_data.json'), 'w') as json_out:
+            json.dump(data, json_out, cls=MyEncoder, indent=2)
         counter += 1
         pbar.update(counter)
+    subject_dataframe = json_normalize(subject_csv)
+    subject_csv_out = os.path.join(output_folder, 'subject_metadata.csv')
+    subject_dataframe.to_csv(subject_csv_out, index=False)
     pbar.finish()
-    if csv is not None:
-        pandas.DataFrame(csv_output).to_csv('{0}/{1}.csv'.format(output_folder, csv), index=False)
 
 
 def is_dir(dirname):
@@ -100,22 +116,38 @@ def is_dir(dirname):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Turn caesar reductions from ASM into consensus text files')
-    parser.add_argument('input_file', type=argparse.FileType('r'), help='The reduction export from caesar for the workflow')
-    parser.add_argument('output_folder', type=is_dir, help='The folder to save the `.txt` files to')
-    parser.add_argument('-s', '--show-score', action='store_true', help='Show consensus scores for each line of text')
-    parser.add_argument('-r', '--replace-arrow', action='store_true', help='Replace `=>` with `:` in csv dump before processing (only needed for old Caesar data dumps)')
-    parser.add_argument('-k', '--reducer-key', default=None, help='The reducer key to use, if left blank no key is used (useful for data processed offline)')
-    parser.add_argument('--strip-sw', action='store_true', help='Strip "sw-" for tag names')
-    parser.add_argument('-c', '--csv', default=None, help='Make a `.csv` file with this name contaning all the transcriptions')
-    parser.add_argument('-m', '--metadata', default=None, help='The `metadata` column of this subjects `csv` file will be unpaced into the ouput `csv` table')
+    parser.add_argument(
+        'input_file',
+        type=argparse.FileType('r'),
+        help='The reduction export from caesar or offline aggregation for the workflow'
+    )
+    parser.add_argument(
+        'output_folder',
+        type=is_dir,
+        help='The base folder to output files to'
+    )
+    parser.add_argument(
+        '-k',
+        '--reducer-key',
+        default=None,
+        help='The caesar reducer key for the transcription reducer. This is not needed for aggregation done offline'
+    )
+    parser.add_argument(
+        '--strip-sw',
+        action='store_true',
+        help='Strip "sw-" for tag names (only used for shakespeares world)'
+    )
+    parser.add_argument(
+        '-m',
+        '--metadata',
+        default=None,
+        help='Path to the panoptes subject data dump `csv` file. When provided the `metadata` column will be included in the output `csv` table'
+    )
     args = parser.parse_args()
     most_common_text(
         args.input_file,
         args.output_folder,
-        show_score=args.show_score,
-        replace_arrow=args.replace_arrow,
         reducer_key=args.reducer_key,
         strip_sw=args.strip_sw,
-        csv=args.csv,
         metadata=args.metadata
     )
