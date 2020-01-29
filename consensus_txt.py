@@ -4,6 +4,7 @@ import pandas
 import progressbar
 import json
 from collections import OrderedDict
+from panoptes_aggregation.reducers.text_utils import consensus_score
 from panoptes_aggregation.csv_utils import unflatten_data
 from panoptes_aggregation.routes import MyEncoder
 from pandas.io.json import json_normalize
@@ -37,11 +38,28 @@ def most_common_text(
     counter = 0
     pbar = progressbar.ProgressBar(widgets=widgets, max_value=len(table_to_loop))
     pbar.start()
-    for idx, reduction in table_to_loop.iterrows():
+    for _, reduction in table_to_loop.iterrows():
         page_csv = []
         pages = []
         data = unflatten_data(reduction)
         frames = sorted([k for k in data.keys() if 'frame' in k])
+        if 'transcribed_lines' not in data:
+            # this was reduced before v3.4, add in additional data
+            number_of_lines = 0
+            low_consensus_lines = 0
+            for frame in frames:
+                for line in data[frame]:
+                    _, consensus_text = consensus_score(line['clusters_text'])
+                    line['low_consensus'] = line['consensus_score'] < 3
+                    line['consensus_text'] = consensus_text
+                    line.setdefault('user_ids', None)
+                    if line['low_consensus']:
+                        low_consensus_lines += 1
+                    number_of_lines += 1
+            data['transcribed_lines'] = number_of_lines
+            data['low_consensus_lines'] = low_consensus_lines
+        data.setdefault('parameters', None)
+        data.setdefault('reducer', None)
         subject_row = OrderedDict([
             ('zooniverse_subject_id', reduction.subject_id),
             ('number_of_pages', len(frames)),
@@ -60,6 +78,12 @@ def most_common_text(
             lines = []
             for line in data[frame]:
                 line_counter += 1
+                if 'consensus_text' not in line:
+                    # One version of aggregation defined `transcribed_lines` but not `consensus_text`
+                    _, consensus_text = consensus_score(line['clusters_text'])
+                    line['consensus_text'] = consensus_text
+                line.setdefault('low_consensus', line['consensus_score'] < 3)
+                line.setdefault('user_ids', None)
                 text = line['consensus_text']
                 if strip_sw:
                     text = text.replace('<sw-', '<')
