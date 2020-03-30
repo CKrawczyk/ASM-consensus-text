@@ -7,7 +7,7 @@ from collections import OrderedDict
 from panoptes_aggregation.reducers.text_utils import consensus_score
 from panoptes_aggregation.csv_utils import unflatten_data
 from panoptes_aggregation.routes import MyEncoder
-from pandas.io.json import json_normalize
+from pandas import json_normalize
 
 widgets = [
     'Processing: ',
@@ -70,7 +70,8 @@ def most_common_text(
         ])
         if metadata is not None:
             idx = (subjects.subject_id == reduction.subject_id) & (subjects.workflow_id == reduction.workflow_id)
-            subject_row['metadata'] = subjects[idx].iloc[0].metadata
+            if idx.sum() > 0:
+                subject_row['metadata'] = subjects[idx].iloc[0].metadata
         subject_csv.append(subject_row)
         line_counter = 0
         for frame in frames:
